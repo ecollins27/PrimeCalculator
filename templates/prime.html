@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:line-height="http://www.w3.org/1999/xhtml">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name=viewport content='width=700'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CIF Prime Calculator</title>
+    <link rel="icon" href="static/cificon.png" type="image/x-icon" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        html,
+        body {
+            font-size: 1.25rem;
+            background-color:#0f0f0f;
+            font-family:'Courier new';
+        }
+
+        #root {
+            width: fit-content;
+            height: 98vh;
+            margin: 0 auto;
+            padding: 0 1rem;
+            display: flex;
+            flex-flow: column;
+        }
+
+        #header {
+            margin-bottom: 3rem;
+            text-align: center;
+            color:#00ff00;
+            font-family:'Courier new';
+        }
+
+
+        #header>div:first-child {
+            padding-right: 1rem;
+            font-size: 1.75rem;
+        }
+
+        #header>div:nth-child(2) {
+
+            font-size: 1rem;
+            text-overflow: ellipsis;
+        }
+
+        #mainBody {
+            flex: 1;
+        }
+        div {
+            text-align: center;
+            color:#ffffff;
+            font-size:1rem;
+        }
+        #num_primes {
+            color: #ffff00;
+        }
+        #max_num {
+            color: #ffff00;
+        }
+        form {
+            margin-top: 3rem;
+        }
+        input {
+            background-color: #0f0f0f;
+            color: #ffffff;
+        }
+        button {
+            background-color: #0f0f0f;
+            color: #00ff00;
+            margin-top: 1rem;
+        }
+        a:link {
+            color: #00ff00;
+            background-color: transparent;
+            text-decoration: underline;
+        }
+
+        a:visited {
+            color: #00ff00;
+            background-color: transparent;
+            text-decoration: underline;
+        }
+
+        a:hover {
+            color: #ffff00;
+            background-color: transparent;
+            text-decoration: underline;
+        }
+
+        a:active {
+            color: #00ff00;
+            background-color: transparent;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<!-- ToDo: Inherit from a base template -->
+<body>
+    <div id="root" >
+        <div id="header">
+            <div style="color:#00ff00">Welcome to CIF's Prime Calculator!</div>
+        </div>
+        <div id="mainBody">
+            <div>While some prime calculators like to determine if a number is prime on the fly, here at CIF, we are proactive and do it all before hand.</div>
+            <div>This genius new method has no flaws whatsoever!</div>
+            <div>We've calculated <span id="num_primes">{{num_primes}}</span> primes up to <span id="max_num">{{max_num}}</span> and counting so give it a try!</div>
+            <form>
+                <label>Number:</label>
+                <input id="check_input" type="text">
+                <button id="check_button">Check</button>
+                <div id="check_output" style="margin-top:1rem;"></div>
+                <label>Index:</label>
+                <input id="index_input" type="text">
+                <button id="index_get">Get Prime</button>
+                <div id="index_output" style="margin-top:1rem;"></div>
+                <button id="random_button">Get Random Prime</button>
+                <div id="random_output" style="margin-top:1rem;"></div>
+                <div><a href="/browse/">Browse Primes</a></div>
+            </form>
+    </div>
+</div>
+<script>
+    function update_count(payload){
+        var element = document.getElementById("num_primes");
+        element.textContent = payload["count"];
+        element = document.getElementById("max_num");
+        element.textContent = payload["max"];
+    }
+
+    const check_output = document.getElementById("check_output");
+    const check_input = document.getElementById("check_input");
+    document.getElementById("check_button").addEventListener("click", function(event){
+        event.preventDefault();
+        const input = check_input.value;
+        if (input == ""){
+            check_output.textContent = "";
+            return;
+        }
+        if (!(/^\d+$/.test(input)) && input != ""){
+            check_output.textContent = "Invalid Input";
+            check_output.style.color = "#ff0000";
+            return;
+        } else {
+            check_output.textContent = "";
+        }
+        fetch("/api/num_check?num=" + input).then(response => {
+            if (response.status == 200){
+                check_output.textContent = "" + input + " is prime!";
+                check_output.style.color = "#00ff00";
+            } else if (response.status == 201){
+                check_output.textContent = "" + input + " is not prime.";
+                check_output.style.color = "#00ffff";
+            } else {
+                check_output.textContent = "We haven't checked " + input + " yet!";
+                check_output.style.color = "#ffff00";
+            }
+        });
+    });
+    const index_output = document.getElementById("index_output");
+    const index_input = document.getElementById("index_input");
+    document.getElementById("index_get").addEventListener("click", function(event){
+        event.preventDefault();
+        const input = index_input.value;
+        if (input == ""){
+            index_output.textContent = "";
+            return;
+        }
+        if (!(/^\d+$/.test(input))){
+            index_output.textContent = "Invalid Input";
+            index_output.style.color = "#ff0000";
+            return;
+        }
+        fetch("/api/index?num=" + input).then(response => {
+            response.json().then(data => {
+                if (data["prime"] == "Unknown"){
+                    index_output.textContent = "We haven't found that many primes yet!";
+                    index_output.style.color = "#ffff00";
+                } else if (data["prime"] == "Zero"){
+                    index_output.textContent = "Invalid Input";
+                    index_output.style.color = "#ff0000";
+                } else {
+                    var postfix;
+                    if (input[input.length - 1] == '1'){
+                        postfix = "st";
+                    } else if (input[input.length - 1] == '2'){
+                        postfix = "nd";
+                    } else if (input[input.length - 1] == '3'){
+                        postfix = "rd";
+                    } else {
+                        postfix = "th";
+                    }
+                    index_output.textContent = "The " + data["index"] + postfix + " prime is " + data["prime"];
+                    index_output.style.color = "#00ff00";
+                }
+            });
+        });
+    });
+    random_output = document.getElementById("random_output");
+    document.getElementById("random_button").addEventListener("click", function(event){
+        event.preventDefault();
+        fetch("/api/random").then(response => {
+            response.json().then(data => {
+                random_output.textContent = "Your random prime is " + data["random"];
+            });
+        });
+    });
+    const socket = io();
+    socket.on("count_update", update_count);
+</script>
+
+</body>
+</html>
