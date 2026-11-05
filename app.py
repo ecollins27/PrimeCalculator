@@ -2,8 +2,7 @@ import math
 import re
 import random
 from tarfile import data_filter
-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import os
 import mariadb
 from flask_socketio import SocketIO
@@ -13,12 +12,13 @@ import psutil
 from pathlib import Path
 import shutil
 import time
+from datetime import datetime
 import subprocess
 from subprocess import Popen
 
 RESET_DATABASE = True
 OFFSET = 250000
-USERNAME = "username"
+USERNAME = "user"
 PASSWORD = "password"
 PARTITION_SIZE = 1000000000
 MAX_PARTITION_VALUE = PARTITION_SIZE
@@ -29,8 +29,6 @@ NUMS_PER_THREAD = 5000
 app = Flask(__name__)
 socketio = SocketIO(app)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 next_check = ""
 increment_index = 1
@@ -77,7 +75,6 @@ def exists(cursor, num):
     return int(cursor.fetchone()[0]) > 0
 
 def reset_database():
-    global SESSION_ID
     database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
     cursor = database.cursor()
     cursor.execute("DROP TABLE primes")
@@ -88,18 +85,100 @@ def reset_database():
     cursor.execute(f"INSERT INTO index_lookup VALUE (0, 2)")
     database.commit()
     database.close()
-    SESSION_ID += 1
-    with open('session.txt', 'w') as f:
-        f.write(str(SESSION_ID))
+    for file in os.listdir(f"{BASE_DIR}/generated"):
+        os.remove(f"{BASE_DIR}/generated/{file}")
 
-@app.route("/api/index-generate")
-def generate_by_index():
-    try:
-        pass
-    except Exception as e:
-        pass
-    finally:
-        os.remove('index-generate.lock')
+def generate_by_index(lower, upper, ip):
+    request_num = upper - lower
+    filename = f"{BASE_DIR}/generated/by-index_{ip}.txt"
+    database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
+    cursor = database.cursor()
+    lower_prime = get_prime_at_index(lower - 1, cursor) if lower > 0 else 0
+    update_interval = len(range(0, request_num, 1000)) // 100
+    for i in range(0, request_num, 1000):
+        cursor.execute(
+            f"SELECT * FROM primes WHERE number > {lower_prime} ORDER BY number ASC LIMIT {min(1000, request_num - i)} OFFSET {i}")
+        output = [str(line[0]) for line in cursor.fetchmany(min(1000, request_num - i))]
+        with open(filename, 'w' if i == 0 else 'a') as f:
+            f.write('\n'.join(output))
+            f.write('\n')
+        if (i // 1000) % update_interval == 0:
+            socketio.emit("index_progress_update", {'ip': ip, 'value': i / request_num})
+    socketio.emit("index_progress_update", {'ip': ip, 'value': 1})
+    database.close()
+
+def generate_by_range(lower, upper, ip):
+    request_num = upper - lower
+    filename = f"{BASE_DIR}/generated/by-range_{ip}.txt"
+    database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
+    cursor = database.cursor()
+    update_interval = len(range(0, request_num, 10000)) // 100
+    for i in range(0, request_num, 10000):
+        cursor.execute(f"SELECT COUNT(*) FROM primes WHERE number > {lower + i} AND number <= {min(upper, lower + i + 10000)} ORDER BY number ASC")
+        count = int(cursor.fetchone()[0])
+        cursor.execute(f"SELECT * FROM primes WHERE number > {lower + i} AND number <= {min(upper, lower + i + 10000)} ORDER BY number ASC")
+        output = [str(line[0]) for line in cursor.fetchmany(count)]
+        with open(filename, 'w' if i == 0 else 'a') as f:
+            f.write('\n'.join(output))
+            f.write('\n')
+        if (i // 10000) % update_interval == 0:
+            socketio.emit("range_progress_update", {'ip': ip, 'value': i / request_num})
+    socketio.emit("range_progress_update", {'ip': ip, 'value': 1})
+    database.close()
+
+@app.route("/api/by-index/generate")
+def start_index_generation():
+    if not "lower" in request.args or not "upper" in request.args or not "start_time" in request.args:
+        return "BAD", 400
+    lower = int(request.args.get('lower'))
+    upper = int(request.args.get('upper'))
+    start_time = datetime.fromisoformat(request.args.get('start_time'))
+    if (datetime.now() - start_time).total_seconds() <= 1:
+        return jsonify({"error": "You are a bot"}), 400
+    elif upper <= lower or upper < 1 or lower < 0:
+        return jsonify({"error": "Invalid bounds"}), 400
+    if os.path.exists(f"{BASE_DIR}/generated/by-index_{request.remote_addr}.txt"):
+        return jsonify({"error": "Cannot make more than one generation request at once"}), 400
+    if upper > num_primes:
+        return jsonify({"error": "We haven't found that many primes yet!"}), 400
+    thread = threading.Thread(target=generate_by_index, args=(lower, upper, request.remote_addr, ))
+    thread.start()
+    return "OK", 200
+
+@app.route("/api/by-index/get")
+def get_index_generation():
+    if os.path.exists(f"{BASE_DIR}/generated/by-index_{request.remote_addr}.txt"):
+        response = send_file(f"{BASE_DIR}/generated/by-index_{request.remote_addr}.txt", as_attachment=True)
+        os.remove(f"{BASE_DIR}/generated/by-index_{request.remote_addr}.txt")
+        return response
+    return jsonify({"error":"File does not exist"})
+
+@app.route("/api/by-range/generate")
+def start_range_generation():
+    if not "lower" in request.args or not "upper" in request.args or not "start_time" in request.args:
+        return "BAD", 400
+    lower = int(request.args.get('lower'))
+    upper = int(request.args.get('upper'))
+    start_time = datetime.fromisoformat(request.args.get('start_time'))
+    if (datetime.now() - start_time).total_seconds() <= 1:
+        return jsonify({"error": "You are a bot"}), 400
+    elif upper <= lower or upper < 1 or lower < 0:
+        return jsonify({"error": "Invalid bounds"}), 400
+    if os.path.exists(f"{BASE_DIR}/generated/by-range_{request.remote_addr}.txt"):
+        return jsonify({"error": "Cannot make more than one generation request at once"}), 400
+    if upper > next_check:
+        return jsonify({"error": "We haven't checked those numbers yet!"}), 400
+    thread = threading.Thread(target=generate_by_range, args=(lower, upper, request.remote_addr, ))
+    thread.start()
+    return "OK", 200
+
+@app.route("/api/by-range/get")
+def get_range_generation():
+    if os.path.exists(f"{BASE_DIR}/generated/by-range_{request.remote_addr}.txt"):
+        response = send_file(f"{BASE_DIR}/generated/by-range_{request.remote_addr}.txt", as_attachment=True)
+        os.remove(f"{BASE_DIR}/generated/by-range_{request.remote_addr}.txt")
+        return response
+    return jsonify({"error":"File does not exist"})
 
 @app.route("/api/num_check", methods=['GET'])
 def check_num():
@@ -138,7 +217,6 @@ def get_prime():
             packet = {"prime": format(get_prime_at_index(index - 1, cursor)), "index": format(index)}
     except Exception as e:
         packet = {"prime": "Unknown"}
-        print(e)
     return jsonify(packet)
 
 @app.route("/api/random", methods=['GET'])
@@ -155,7 +233,7 @@ def get_random():
 
 @app.route("/", methods=["GET"])
 def get_prime_html():
-    return render_template("prime.html", num_primes=format(num_primes), max_num=format(next_check))
+    return render_template("prime.html", num_primes=format(num_primes), max_num=format(next_check), start_time=str(datetime.now()))
 
 def calculate_primes():
     global next_check

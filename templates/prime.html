@@ -95,6 +95,10 @@
             background-color: transparent;
             text-decoration: underline;
         }
+        progress {
+            width: 30%;
+            accent-color: #00ff00;
+        }
     </style>
 </head>
 
@@ -119,15 +123,70 @@
                 <div id="index_output" style="margin-top:1rem;"></div>
                 <button id="random_button">Get Random Prime</button>
                 <div id="random_output" style="margin-top:1rem;"></div>
+                <div>All primes with index <input id="index-lower" type="number" min="0" value="0"> &lt; n &le; <input id="index-upper" type="number" min="1" value="1"> <button id="generate-index">Generate</button></div>
+                <div id="index-message" style="visibility: hidden;"></div>
+                <div><progress id="index-progress" max="100" value="0" style="visibility: hidden;"></progress></div>
+                <div>All primes <input id="range-lower" type="number" min="0" value="0"> &lt; p &le; <input id="range-upper" type="number" min="1" value="1"> <button id="generate-range">Generate</button></div>
+                <div id="range-message" style="visibility: hidden;"></div>
+                <div><progress id="range-progress" max="100" value="0" style="visibility: hidden;"></progress></div>
             </form>
     </div>
 </div>
 <script>
+    const ip = "{{ request.remote_addr }}";
     function update_count(payload){
         var element = document.getElementById("num_primes");
         element.textContent = payload["count"];
         element = document.getElementById("max_num");
         element.textContent = payload["max"];
+    }
+
+    function update_index_progress(payload){
+        if (payload["ip"] == ip){
+            const progress_bar = document.getElementById("index-progress");
+            progress_bar.value = "" + Math.trunc(progress_bar.max * payload["value"]);
+            if (payload["value"] >= 1){
+                fetch("/api/by-index/get?ip={{request.remote_addr}}").then(response => {
+                    return response.blob();
+                }).then(blob => {
+                    const lower = document.getElementById("index-lower");
+                    const upper = document.getElementById("index-upper");
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = "by-index_" + lower.value + "_" + upper.value + ".txt";
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    progress_bar.style.visibility = "hidden";
+                });
+            }
+        }
+    }
+
+    function update_range_progress(payload){
+        if (payload["ip"] == ip){
+            const progress_bar = document.getElementById("range-progress");
+            progress_bar.value = "" + Math.trunc(progress_bar.max * payload["value"]);
+            if (payload["value"] >= 1){
+                fetch("/api/by-range/get?ip={{request.remote_addr}}").then(response => {
+                    return response.blob();
+                }).then(blob => {
+                    const lower = document.getElementById("range-lower");
+                    const upper = document.getElementById("range-upper");
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = "by-range_" + lower.value + "_" + upper.value + ".txt";
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    progress_bar.style.visibility = "hidden";
+                });
+            }
+        }
     }
 
     const check_output = document.getElementById("check_output");
@@ -207,8 +266,51 @@
             });
         });
     });
+    document.getElementById("generate-index").addEventListener("click", function(event){
+        event.preventDefault();
+        const lower = document.getElementById("index-lower");
+        const upper = document.getElementById("index-upper");
+        const progress_bar = document.getElementById("index-progress");
+        const message = document.getElementById("index-message");
+        fetch("/api/by-index/generate?lower=" + lower.value + "&upper=" + upper.value + "&start_time={{ start_time }}").then(response => {
+            if (response.status == 200){
+                progress_bar.style.visibility = "visible";
+                progress_bar.value = "0";
+                message.style.visibility = "hidden";
+            } else {
+                response.json().then(data => {
+                    message.style.visibility = "visible";
+                    message.style.color = "#ff0000";
+                    message.textContent = data["error"];
+                });
+            }
+        });
+    });
+    document.getElementById("generate-range").addEventListener("click", function(event){
+        event.preventDefault();
+        const lower = document.getElementById("range-lower");
+        const upper = document.getElementById("range-upper");
+        const progress_bar = document.getElementById("range-progress");
+        const message = document.getElementById("range-message");
+        fetch("/api/by-range/generate?lower=" + lower.value + "&upper=" + upper.value + "&start_time={{ start_time }}").then(response => {
+            if (response.status == 200){
+                progress_bar.style.visibility = "visible";
+                progress_bar.value = "0";
+                message.style.visibility = "hidden";
+            } else {
+                response.json().then(data => {
+                    message.style.visibility = "visible";
+                    message.style.color = "#ff0000";
+                    message.textContent = data["error"];
+                });
+            }
+        });
+    });
+
     const socket = io();
     socket.on("count_update", update_count);
+    socket.on("index_progress_update", update_index_progress);
+    socket.on("range_progress_update", update_range_progress);
 </script>
 
 </body>
