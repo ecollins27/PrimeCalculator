@@ -60,6 +60,12 @@
         #max_num {
             color: #ffff00;
         }
+        #database_size {
+            color: #ffff00;
+        }
+        #bits-per-prime {
+            color: #ffff00;
+        }
         form {
             margin-top: 3rem;
         }
@@ -111,7 +117,11 @@
         <div id="mainBody">
             <div>While some prime calculators like to determine if a number is prime on the fly, here at CIF, we are proactive and do it all before hand.</div>
             <div>This genius new method has no flaws whatsoever!</div>
-            <div>We've calculated <span id="num_primes">{{num_primes}}</span> primes up to <span id="max_num">{{max_num}}</span> and counting so give it a try!</div>
+            <div></div>
+            <div>Num Primes: <span id="num_primes">{{num_primes}}</span></div>
+            <div>Max Prime: <span id="max_num">{{max_num}}</span></div>
+            <div>Database Size: <span id="database_size">{{database_size}}</span></div>
+            <div>Average Bits/Prime: <span id="bits-per-prime">{{bits_per_prime}}</span></div>
             <form>
                 <label>Number:</label>
                 <input id="check_input" type="text">
@@ -123,69 +133,32 @@
                 <div id="index_output" style="margin-top:1rem;"></div>
                 <button id="random_button">Get Random Prime</button>
                 <div id="random_output" style="margin-top:1rem;"></div>
-                <div>All primes with index <input id="index-lower" type="number" min="0" value="0"> &lt; n &le; <input id="index-upper" type="number" min="1" value="1"> <button id="generate-index">Generate</button></div>
-                <div id="index-message" style="visibility: hidden;"></div>
-                <div><progress id="index-progress" max="100" value="0" style="visibility: hidden;"></progress></div>
-                <div>All primes <input id="range-lower" type="number" min="0" value="0"> &lt; p &le; <input id="range-upper" type="number" min="1" value="1"> <button id="generate-range">Generate</button></div>
-                <div id="range-message" style="visibility: hidden;"></div>
-                <div><progress id="range-progress" max="100" value="0" style="visibility: hidden;"></progress></div>
             </form>
     </div>
 </div>
 <script>
     const ip = "{{ request.remote_addr }}";
+
     function update_count(payload){
         var element = document.getElementById("num_primes");
         element.textContent = payload["count"];
         element = document.getElementById("max_num");
         element.textContent = payload["max"];
+        element = document.getElementById("database_size");
+        element.textContent = payload["db_size"];
+        element = document.getElementById("bits-per-prime");
+        element.textContent = payload["bpp"];
     }
 
-    function update_index_progress(payload){
-        if (payload["ip"] == ip){
-            const progress_bar = document.getElementById("index-progress");
-            progress_bar.value = "" + Math.trunc(progress_bar.max * payload["value"]);
-            if (payload["value"] >= 1){
-                fetch("/api/by-index/get?ip={{request.remote_addr}}").then(response => {
-                    return response.blob();
-                }).then(blob => {
-                    const lower = document.getElementById("index-lower");
-                    const upper = document.getElementById("index-upper");
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = "by-index_" + lower.value + "_" + upper.value + ".txt";
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    URL.revokeObjectURL(url);
-                    progress_bar.style.visibility = "hidden";
-                });
-            }
-        }
-    }
-
-    function update_range_progress(payload){
-        if (payload["ip"] == ip){
-            const progress_bar = document.getElementById("range-progress");
-            progress_bar.value = "" + Math.trunc(progress_bar.max * payload["value"]);
-            if (payload["value"] >= 1){
-                fetch("/api/by-range/get?ip={{request.remote_addr}}").then(response => {
-                    return response.blob();
-                }).then(blob => {
-                    const lower = document.getElementById("range-lower");
-                    const upper = document.getElementById("range-upper");
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = "by-range_" + lower.value + "_" + upper.value + ".txt";
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    URL.revokeObjectURL(url);
-                    progress_bar.style.visibility = "hidden";
-                });
-            }
+    function get_postfix(input){
+        if (!input.endsWith("11") && input[input.length - 1] == '1'){
+            return "st";
+        } else if (!input.endsWith("12") && input[input.length - 1] == '2'){
+            return "nd";
+        } else if (!input.endsWith("13") && input[input.length - 1] == '3'){
+            return "rd";
+        } else {
+            return "th";
         }
     }
 
@@ -193,7 +166,7 @@
     const check_input = document.getElementById("check_input");
     document.getElementById("check_button").addEventListener("click", function(event){
         event.preventDefault();
-        const input = check_input.value;
+        const input = check_input.value.replace(",", "");
         if (input == ""){
             check_output.textContent = "";
             return;
@@ -206,23 +179,26 @@
             check_output.textContent = "";
         }
         fetch("/api/num_check?num=" + input).then(response => {
-            if (response.status == 200){
-                check_output.textContent = "" + input + " is prime!";
-                check_output.style.color = "#00ff00";
-            } else if (response.status == 201){
-                check_output.textContent = "" + input + " is not prime.";
-                check_output.style.color = "#00ffff";
-            } else {
-                check_output.textContent = "We haven't checked " + input + " yet!";
-                check_output.style.color = "#ffff00";
-            }
+            response.json().then(data => {
+                console.log(data);
+                if (Object.hasOwn(data, "error")){
+                    check_output.textContent = "We haven't checked " + input + " yet!";
+                    check_output.style.color = "#ffff00";
+                } else if (data["prime"]){
+                    check_output.textContent = "" + data["input"] + " is the " + data["index"] + get_postfix(data["index"]) + " prime";
+                    check_output.style.color = "#00ff00";
+                } else {
+                    check_output.textContent = "" + data["input"] + " is not prime";
+                    check_output.style.color = "#ff0000";
+                }
+            });
         });
     });
     const index_output = document.getElementById("index_output");
     const index_input = document.getElementById("index_input");
     document.getElementById("index_get").addEventListener("click", function(event){
         event.preventDefault();
-        const input = index_input.value;
+        const input = index_input.value.replace(",", "");
         if (input == ""){
             index_output.textContent = "";
             return;
@@ -241,16 +217,7 @@
                     index_output.textContent = "Invalid Input";
                     index_output.style.color = "#ff0000";
                 } else {
-                    var postfix;
-                    if (input[input.length - 1] == '1'){
-                        postfix = "st";
-                    } else if (input[input.length - 1] == '2'){
-                        postfix = "nd";
-                    } else if (input[input.length - 1] == '3'){
-                        postfix = "rd";
-                    } else {
-                        postfix = "th";
-                    }
+                    var postfix = get_postfix(input);
                     index_output.textContent = "The " + data["index"] + postfix + " prime is " + data["prime"];
                     index_output.style.color = "#00ff00";
                 }
@@ -266,51 +233,9 @@
             });
         });
     });
-    document.getElementById("generate-index").addEventListener("click", function(event){
-        event.preventDefault();
-        const lower = document.getElementById("index-lower");
-        const upper = document.getElementById("index-upper");
-        const progress_bar = document.getElementById("index-progress");
-        const message = document.getElementById("index-message");
-        fetch("/api/by-index/generate?lower=" + lower.value + "&upper=" + upper.value + "&start_time={{ start_time }}").then(response => {
-            if (response.status == 200){
-                progress_bar.style.visibility = "visible";
-                progress_bar.value = "0";
-                message.style.visibility = "hidden";
-            } else {
-                response.json().then(data => {
-                    message.style.visibility = "visible";
-                    message.style.color = "#ff0000";
-                    message.textContent = data["error"];
-                });
-            }
-        });
-    });
-    document.getElementById("generate-range").addEventListener("click", function(event){
-        event.preventDefault();
-        const lower = document.getElementById("range-lower");
-        const upper = document.getElementById("range-upper");
-        const progress_bar = document.getElementById("range-progress");
-        const message = document.getElementById("range-message");
-        fetch("/api/by-range/generate?lower=" + lower.value + "&upper=" + upper.value + "&start_time={{ start_time }}").then(response => {
-            if (response.status == 200){
-                progress_bar.style.visibility = "visible";
-                progress_bar.value = "0";
-                message.style.visibility = "hidden";
-            } else {
-                response.json().then(data => {
-                    message.style.visibility = "visible";
-                    message.style.color = "#ff0000";
-                    message.textContent = data["error"];
-                });
-            }
-        });
-    });
 
     const socket = io();
     socket.on("count_update", update_count);
-    socket.on("index_progress_update", update_index_progress);
-    socket.on("range_progress_update", update_range_progress);
 </script>
 
 </body>
