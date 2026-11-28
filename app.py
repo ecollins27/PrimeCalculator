@@ -31,10 +31,6 @@ max_prime = 0
 db_size = 0
 bits_per_prime = 0
 
-def format(num):
-    pattern = r"(?m)(?<=\d)\d{3}(?=(?:\d{3})*$)"
-    return str(re.sub(pattern, r",\g<0>", str(num)))
-
 def leading_zeros(str):
     for i, char in enumerate(str):
         if char != '0':
@@ -44,35 +40,68 @@ def leading_zeros(str):
 def pad(str):
     return ("0" * (8 - len(str))) + str
 
-def decode_file(filename):
-    with open(filename, 'rb') as f:
-        bytes = f.read()
-    k = int(bytes[0])
-    bytes = bytes[1:]
-    M = 1 << k
-    output = []
-    val = ""
-    for i, byte in enumerate(bytes):
-        val += pad(str(bin(byte))[2:])
-        bit_length = leading_zeros(val)
-        enc_length = (2 * bit_length + k) if bit_length > 0 else (k + 1)
-        while bit_length >= 0 and len(val) >= enc_length:
-            if bit_length > 0:
-                val = val[bit_length:]
-                num = int(val[:bit_length], 2) * M
-                val = val[bit_length:]
-            else:
-                num = 0
-                val = val[1:]
-            num += int(val[:k], 2)
-            val = val[k:]
-            output.append(2 * num)
-            bit_length = leading_zeros(val)
-            enc_length = (2 * bit_length + k) if bit_length > 0 else (k + 1)
-    if filename.endswith('/1'):
-        output[0] = 1
-    return output
+class Decoder:
 
+    bytes: list
+    binary_str: str
+
+    def __init__(self, filename):
+        with open(filename, 'rb') as f:
+            self.bytes = f.read()
+        self.binary_str = ""
+
+    def next_unary(self):
+        bit_length = leading_zeros(self.binary_str)
+        while len(self.bytes) > 0 and (bit_length < 0 or len(self.binary_str) < 2 * bit_length + 1):
+            self.binary_str += pad(str(bin(self.bytes[0]))[2:])
+            self.bytes = self.bytes[1:]
+            bit_length = leading_zeros(self.binary_str)
+        if len(self.bytes) == 0 and (bit_length < 0 or len(self.binary_str) < 2 * bit_length + 1):
+            return None
+        self.binary_str = self.binary_str[bit_length:]
+        val = int(self.binary_str[:(bit_length + 1)], 2)
+        self.binary_str = self.binary_str[(bit_length + 1):]
+        return val
+
+    def next_golumb(self, M, k):
+        q = self.next_unary()
+        if q is None:
+            return None
+        q -= 1
+        while len(self.bytes) > 0 and len(self.binary_str) < k:
+            self.binary_str += pad(str(bin(self.bytes[0]))[2:])
+            self.bytes = self.bytes[1:]
+        if len(self.binary_str) < k:
+            return None
+        r = int(self.binary_str[:k], 2)
+        self.binary_str = self.binary_str[k:]
+        return q * M + r
+
+    def next_byte(self):
+        val = int(self.bytes[0])
+        self.bytes = self.bytes[1:]
+        return val
+
+def format(num):
+    pattern = r"(?m)(?<=\d)\d{3}(?=(?:\d{3})*$)"
+    return str(re.sub(pattern, r",\g<0>", str(num)))
+
+def decode_file(filename):
+    decoder = Decoder(filename)
+    k = decoder.next_byte()
+    M = 1 << k
+    num_gaps = decoder.next_golumb(M, k)
+    common_gaps = []
+    for i in range(num_gaps):
+        common_gaps.append(decoder.next_golumb(M, k))
+    next = decoder.next_golumb(M, k)
+    diffs = []
+    while not next is None:
+        diffs.append(2 * common_gaps[next])
+        next = decoder.next_golumb(M, k)
+    if "/1-" in filename or filename.endswith("/1"):
+        diffs[0] = 1
+    return diffs
 
 def reset_database():
     for file in os.listdir(f"{BASE_DIR}/database"):
@@ -84,35 +113,32 @@ def reset_database():
     database.commit()
     database.close()
 
-@app.route("/api/num_check", methods=['GET'])
+@app.route("/api/check", methods=['GET'])
 def check_num():
-    try:
-        num = int(request.args.get("num"))
-        num_cpy = num
-        if num >= max_prime:
-            packet = {'error': 'num too high'}
+    if not "num" in request.args:
+        return "BAD", 400
+    num = request.args["num"]
+    if not num.isnumeric() or int(num) <= 0:
+        return "BAD", 400
+    num = int(request.args.get("num"))
+    if num >= max_prime:
+        return jsonify({'error': 'num too high'}), 400
+    else:
+        database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
+        cursor = database.cursor()
+        cursor.execute(f"SELECT * FROM chunks WHERE prime <= {num} ORDER BY chunk_id DESC LIMIT 1")
+        chunk_id, last_prime = cursor.fetchone()
+        num -= last_prime
+        diffs = decode_file(f"{BASE_DIR}/database/{chunk_id + 1}")
+        index = 0
+        while num > 0:
+            num -= diffs[index]
+            index += 1
+        if num == 0:
+            packet = {'prime':True, 'index': chunk_id * CHUNK_SIZE + index + 1}
         else:
-            database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
-            cursor = database.cursor()
-            cursor.execute(f"SELECT * FROM chunks WHERE prime <= {num} ORDER BY chunk_id DESC LIMIT 1")
-            chunk_id, last_prime = cursor.fetchone()
-            num -= last_prime
-            diffs = decode_file(f"{BASE_DIR}/database/{chunk_id + 1}")
-            index = 0
-            while num > 0:
-                num -= diffs[index]
-                index += 1
-            if num == 0:
-                packet = {'prime':True, 'index':format(CHUNK_SIZE * chunk_id + index + 1), 'input':format(num_cpy)}
-            else:
-                packet = {'prime':False, 'input':format(num_cpy)}
-    except Exception as e:
-        print(e)
-        packet = {'error':str(e)}
+            packet = {'prime':False}
     return jsonify(packet)
-
-
-
 
 def get_prime_at_index(index):
     database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
@@ -128,20 +154,82 @@ def get_prime_at_index(index):
             saved_prime += diffs[i]
     return saved_prime
 
+@app.route("/api/generate/by-index")
+def generate_by_index():
+    if not "lower" in request.args or not "upper" in request.args:
+        return "BAD", 400
+    lower = max(1, int(request.args["lower"]))
+    upper = int(request.args["upper"])
+    num_primes = upper - lower + 1
+    current_chunk = lower // CHUNK_SIZE + 1
+    database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
+    cursor = database.cursor()
+    cursor.execute(f"SELECT * FROM chunks WHERE chunk_id = {current_chunk - 1}")
+    last_prime = cursor.fetchone()[1]
+    database.close()
+    diffs = decode_file(f"{BASE_DIR}/database/{current_chunk}")
+    for i in range(lower % CHUNK_SIZE - 1):
+        last_prime += diffs[i]
+    primes = []
+    num = lower
+    for i in range(min(CHUNK_SIZE, num_primes)):
+        if num // CHUNK_SIZE + 1 != current_chunk:
+            current_chunk = num // CHUNK_SIZE + 1
+            diffs = decode_file(f"{BASE_DIR}/database/{current_chunk}")
+        primes.append(last_prime)
+        last_prime += diffs[num % CHUNK_SIZE]
+        num += 1
+    packet = {"primes": primes}
+    if num_primes > CHUNK_SIZE:
+        packet["next"] = f"/api/generate/by-index?lower={lower + CHUNK_SIZE}&upper={upper}"
+    return jsonify(packet)
+
+@app.route("/api/generate/by-range")
+def generate_by_range():
+    if not "lower" in request.args or not "upper" in request.args:
+        return "BAD", 400
+    lower = max(2, int(request.args["lower"]))
+    upper = int(request.args["upper"])
+    database = mariadb.connect(host="localhost", user=USERNAME, password=PASSWORD, database="PRIMES")
+    cursor = database.cursor()
+    cursor.execute(f"SELECT * FROM chunks WHERE prime <= {lower} ORDER BY chunk_id DESC LIMIT 1")
+    current_chunk, prime = cursor.fetchone()
+    current_chunk += 1
+    diffs = decode_file(f"{BASE_DIR}/database/{current_chunk}")
+    index = 0
+    while prime < lower:
+        prime += diffs[index]
+        index += 1
+    primes = []
+    while prime <= upper and len(primes) < CHUNK_SIZE:
+        primes.append(prime)
+        if  index // CHUNK_SIZE + 1 != current_chunk:
+            current_chunk = prime // CHUNK_SIZE + 1
+            diffs = decode_file(f"{BASE_DIR}/database/{current_chunk}")
+        prime += diffs[index % CHUNK_SIZE]
+        index += 1
+    packet = {"primes": primes}
+    if len(primes) >= CHUNK_SIZE and prime <= upper:
+        packet["next"] = f"/api/generate/by-range?lower={prime}&upper={upper}"
+    return jsonify(packet)
+
 
 @app.route("/api/index", methods=['GET'])
 def get_prime():
-    try:
-        index = int(request.args.get("num"))
-        if index == 0:
-            packet = {"prime": "Zero"}
-        elif index >= num_primes:
-            packet = {"prime": "Unknown"}
-        else:
-            packet = {"prime": format(get_prime_at_index(index - 1)), "index": format(index)}
-    except Exception as e:
-        print(e)
+    if not "n" in request.args or not request.args["n"].isnumeric():
+        return "BAD", 400
+    index = int(request.args.get("n"))
+    if index > num_primes:
+        return jsonify({"error": "n too high"}), 400
+    elif index <= 0:
+        return "BAD", 400
+
+    if index == 0:
+        packet = {"prime": "Zero"}
+    elif index >= num_primes:
         packet = {"prime": "Unknown"}
+    else:
+        packet = {"prime": format(get_prime_at_index(index - 1)), "index": index}
     return jsonify(packet)
 
 @app.route("/api/random", methods=['GET'])
@@ -156,6 +244,11 @@ def get_random():
 @app.route("/", methods=["GET"])
 def get_prime_html():
     return render_template("prime.html", num_primes=format(num_primes), max_num=format(max_prime), database_size=db_size, bits_per_prime=bits_per_prime, start_time=str(datetime.now()))
+
+@app.route("/api", methods=["GET"])
+def get_api_html():
+    return render_template("api.html")
+
 
 def emit_updates():
     global num_primes
@@ -194,6 +287,24 @@ def is_prime(n):
         if n % i == 0:
             return False
     return True
+
+def get_most_common(diffs):
+    diff_set = set(diffs)
+    frequencies = {}
+    for d in diff_set:
+        if not d in frequencies:
+            frequencies[d] = 0
+        frequencies[d] += diffs.count(d)
+    item_list = sorted(frequencies.items(), key=lambda u: u[1], reverse=True)
+    return [i[0] for i in item_list]
+
+def unary_length(n):
+    return 2 * (n + 1).bit_length() - 1
+
+def golumb_length(n, M=4):
+    q = n // M
+    k = M.bit_length()
+    return unary_length(q) + k
 
 if __name__ == '__main__':
     if RESET_DATABASE:

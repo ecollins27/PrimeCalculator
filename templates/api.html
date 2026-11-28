@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:line-height="http://www.w3.org/1999/xhtml">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name=viewport content='width=700'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CIF Prime Calculator</title>
+    <link rel="icon" href="static/cificon.png" type="image/x-icon" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        html,
+        body {
+            font-size: 1.25rem;
+            background-color:#0f0f0f;
+            font-family:'Courier new';
+        }
+
+        #root {
+            width: fit-content;
+            height: 98vh;
+            margin: 0 auto;
+            padding: 0 1rem;
+            display: flex;
+            flex-flow: column;
+        }
+
+        #header {
+            margin-bottom: 3rem;
+            text-align: center;
+            color:#00ff00;
+            font-family:'Courier new';
+        }
+
+        h1 {
+            text-wrap: balance;
+            max-width: 60%;
+        }
+
+        h2 {
+            margin-top: 4rem;
+            text-wrap: balance;
+            max-width: 60%;
+            color: #ffff00;
+        }
+
+        h3 {
+            text-wrap: balance;
+            max-width: 60%;
+        }
+
+        h4 {
+            margin-top: 0rem;
+            margin-bottom: 0.5rem;
+            text-wrap: balance;
+            max-width: 60%;
+        }
+
+        span {
+            color: #00ff00;
+        }
+
+
+
+        #header>div:first-child {
+            padding-right: 1rem;
+            font-size: 1.75rem;
+        }
+
+        #header>div:nth-child(2) {
+
+            font-size: 1rem;
+            text-overflow: ellipsis;
+        }
+
+        #mainBody {
+            flex: 1;
+        }
+        div {
+            text-align: center;
+            color:#ffffff;
+            font-size:1rem;
+        }
+    </style>
+</head>
+
+<!-- ToDo: Inherit from a base template -->
+<body>
+    <div id="root" >
+        <div id="header">
+            <div style="color:#00ff00">We have a Prime API now.  Wow!</div>
+        </div>
+        <div id="mainBody">
+            <center>
+                <h2>/api/random</h2>
+                <h4>Returns a random prime.  Primes are sampled uniformly based on the size of the database on query.</h4>
+                <h2>/api/index</h2>
+                <h4>Gets the nth prime</h4>
+                <h4><span>n</span> = 1 indexed prime index</h4>
+                <h2>/api/check</h2>
+                <h4>Checks if a given number is prime</h4>
+                <h4><span>num</span> = number to check</h4>
+                <h2>/api/generate/by-index</h2>
+                <h4>Generates a list of primes from their indices.  If the number of requested primes exceeds 250,000, the request is paginated and the response contains a link to the next set.</h4>
+                <h4><span>lower</span> = Inclusive lower bound of prime index</h4>
+                <h4><span>upper</span> = Inclusive upper bound of prime index</h4>
+                <h2>/api/generate/by-range</h2>
+                <h4>Generates a list of primes within a range.  If the number of requested primes exceeds 250,000, the request is paginated and the response contains a link to the next set.</h4>
+                <h4><span>lower</span> = Inclusive lower bound</h4>
+                <h4><span>upper</span> = Inclusive upper bound</h4>
+            </center>
+    </div>
+</div>
+<script>
+    const ip = "{{ request.remote_addr }}";
+
+    function update_count(payload){
+        var element = document.getElementById("num_primes");
+        element.textContent = payload["count"];
+        element = document.getElementById("max_num");
+        element.textContent = payload["max"];
+        element = document.getElementById("database_size");
+        element.textContent = payload["db_size"];
+        element = document.getElementById("bits-per-prime");
+        element.textContent = payload["bpp"];
+    }
+
+    function get_postfix(input){
+        if (!input.endsWith("11") && input[input.length - 1] == '1'){
+            return "st";
+        } else if (!input.endsWith("12") && input[input.length - 1] == '2'){
+            return "nd";
+        } else if (!input.endsWith("13") && input[input.length - 1] == '3'){
+            return "rd";
+        } else {
+            return "th";
+        }
+    }
+
+    const check_output = document.getElementById("check_output");
+    const check_input = document.getElementById("check_input");
+    document.getElementById("check_button").addEventListener("click", function(event){
+        event.preventDefault();
+        const input = check_input.value.replace(",", "");
+        if (input == ""){
+            check_output.textContent = "";
+            return;
+        }
+        if (!(/^\d+$/.test(input)) && input != ""){
+            check_output.textContent = "Invalid Input";
+            check_output.style.color = "#ff0000";
+            return;
+        } else {
+            check_output.textContent = "";
+        }
+        fetch("/api/num_check?num=" + input).then(response => {
+            response.json().then(data => {
+                console.log(data);
+                if (Object.hasOwn(data, "error")){
+                    check_output.textContent = "We haven't checked " + input + " yet!";
+                    check_output.style.color = "#ffff00";
+                } else if (data["prime"]){
+                    check_output.textContent = "" + data["input"] + " is the " + data["index"] + get_postfix(data["index"]) + " prime";
+                    check_output.style.color = "#00ff00";
+                } else {
+                    check_output.textContent = "" + data["input"] + " is not prime";
+                    check_output.style.color = "#ff0000";
+                }
+            });
+        });
+    });
+    const index_output = document.getElementById("index_output");
+    const index_input = document.getElementById("index_input");
+    document.getElementById("index_get").addEventListener("click", function(event){
+        event.preventDefault();
+        const input = index_input.value.replace(",", "");
+        if (input == ""){
+            index_output.textContent = "";
+            return;
+        }
+        if (!(/^\d+$/.test(input))){
+            index_output.textContent = "Invalid Input";
+            index_output.style.color = "#ff0000";
+            return;
+        }
+        fetch("/api/index?num=" + input).then(response => {
+            response.json().then(data => {
+                if (data["prime"] == "Unknown"){
+                    index_output.textContent = "We haven't found that many primes yet!";
+                    index_output.style.color = "#ffff00";
+                } else if (data["prime"] == "Zero"){
+                    index_output.textContent = "Invalid Input";
+                    index_output.style.color = "#ff0000";
+                } else {
+                    var postfix = get_postfix(input);
+                    index_output.textContent = "The " + data["index"] + postfix + " prime is " + data["prime"];
+                    index_output.style.color = "#00ff00";
+                }
+            });
+        });
+    });
+    random_output = document.getElementById("random_output");
+    document.getElementById("random_button").addEventListener("click", function(event){
+        event.preventDefault();
+        fetch("/api/random").then(response => {
+            response.json().then(data => {
+                random_output.textContent = "Your random prime is " + data["random"];
+            });
+        });
+    });
+
+    const socket = io();
+    socket.on("count_update", update_count);
+</script>
+
+</body>
+</html>

@@ -151,6 +151,7 @@
     }
 
     function get_postfix(input){
+        input = input.toString();
         if (!input.endsWith("11") && input[input.length - 1] == '1'){
             return "st";
         } else if (!input.endsWith("12") && input[input.length - 1] == '2'){
@@ -162,11 +163,19 @@
         }
     }
 
+    function format(val){
+        str = String(val);
+        for (let i = str.length - 3; i > 0; i -= 3){
+            str = str.substring(0, i) + "," + str.substring(i);
+        }
+        return str;
+    }
+
     const check_output = document.getElementById("check_output");
     const check_input = document.getElementById("check_input");
     document.getElementById("check_button").addEventListener("click", function(event){
         event.preventDefault();
-        const input = check_input.value.replace(",", "");
+        var input = check_input.value.replace(",", "");
         if (input == ""){
             check_output.textContent = "";
             return;
@@ -178,17 +187,16 @@
         } else {
             check_output.textContent = "";
         }
-        fetch("/api/num_check?num=" + input).then(response => {
+        fetch("/api/check?num=" + input).then(response => {
             response.json().then(data => {
-                console.log(data);
                 if (Object.hasOwn(data, "error")){
-                    check_output.textContent = "We haven't checked " + input + " yet!";
+                    check_output.textContent = "We haven't checked " + format(input) + " yet!";
                     check_output.style.color = "#ffff00";
                 } else if (data["prime"]){
-                    check_output.textContent = "" + data["input"] + " is the " + data["index"] + get_postfix(data["index"]) + " prime";
+                    check_output.textContent = "" + format(input) + " is the " + format(data["index"]) + get_postfix(data["index"]) + " prime";
                     check_output.style.color = "#00ff00";
                 } else {
-                    check_output.textContent = "" + data["input"] + " is not prime";
+                    check_output.textContent = "" + format(input) + " is not prime";
                     check_output.style.color = "#ff0000";
                 }
             });
@@ -198,7 +206,7 @@
     const index_input = document.getElementById("index_input");
     document.getElementById("index_get").addEventListener("click", function(event){
         event.preventDefault();
-        const input = index_input.value.replace(",", "");
+        var input = index_input.value.replace(",", "");
         if (input == ""){
             index_output.textContent = "";
             return;
@@ -208,17 +216,19 @@
             index_output.style.color = "#ff0000";
             return;
         }
-        fetch("/api/index?num=" + input).then(response => {
+        fetch("/api/index?n=" + input).then(response => {
+            if (response.status == 400){
+                index_output.textContent = "Invalid Input";
+                index_output.style.color = "#ff0000";
+                return;
+            }
             response.json().then(data => {
-                if (data["prime"] == "Unknown"){
+                if (Object.hasOwn(data, "error")){
                     index_output.textContent = "We haven't found that many primes yet!";
                     index_output.style.color = "#ffff00";
-                } else if (data["prime"] == "Zero"){
-                    index_output.textContent = "Invalid Input";
-                    index_output.style.color = "#ff0000";
                 } else {
                     var postfix = get_postfix(input);
-                    index_output.textContent = "The " + data["index"] + postfix + " prime is " + data["prime"];
+                    index_output.textContent = "The " + format(data["index"]) + postfix + " prime is " + data["prime"];
                     index_output.style.color = "#00ff00";
                 }
             });
